@@ -1,3 +1,4 @@
+// MyFirebaseMessagingService.kt
 package com.example.cloudmessenging
 
 import android.app.NotificationChannel
@@ -8,70 +9,73 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
-    
+
     companion object {
-        private const val TAG = "MyFirebaseMsgService"
-        const val CHANNEL_ID = "fcm_default_channel"
-        var lastMessage: String? = null
-        var lastToken: String? = null
+        private const val TAG       = "MyFirebaseMsgService"
+        const val CHANNEL_ID       = "fcm_default_channel"
+        const val ACTION_MSG       = "com.example.cloudmessenging.NEW_FCM_MESSAGE"
+        const val EXTRA_TITLE      = "extra_title"
+        const val EXTRA_BODY       = "extra_body"
+        var lastToken: String?     = null
     }
-    
+
     override fun onNewToken(token: String) {
         Log.d(TAG, "Refreshed token: $token")
-        // Guardar el token para usarlo en la UI
         lastToken = token
-        
-        // Aquí podrías enviar el token a tu servidor
-        // sendRegistrationToServer(token)
     }
-    
+
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        Log.d(TAG, "From: ${remoteMessage.from}")
-        
-        // Verificar si el mensaje contiene datos
-        if (remoteMessage.data.isNotEmpty()) {
-            Log.d(TAG, "Message data payload: ${remoteMessage.data}")
+        val data = remoteMessage.data
+        val t    = data["title"]
+        val b    = data["body"]
+        Log.d(TAG, "Payload title=$t  body=$b")
+
+        // 1) Enviar broadcast local para refrescar la UI en primer plano
+        Intent(ACTION_MSG).also { broadcast ->
+            broadcast.putExtra(EXTRA_TITLE, t)
+            broadcast.putExtra(EXTRA_BODY,  b)
+            LocalBroadcastManager.getInstance(this)
+                .sendBroadcast(broadcast)
         }
-        
-        // Verificar si el mensaje contiene una notificación
-        remoteMessage.notification?.let {
-            Log.d(TAG, "Message Notification Body: ${it.body}")
-            lastMessage = it.body
-            sendNotification(it.title, it.body)
+
+        // 2) Construir PendingIntent con extras para la notificación
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_TITLE, t)
+            putExtra(EXTRA_BODY,  b)
         }
-    }
-    
-    private fun sendNotification(title: String?, messageBody: String?) {
-        val intent = Intent(this, MainActivity::class.java)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val pendingIntent = PendingIntent.getActivity(
+        val pending = PendingIntent.getActivity(
             this, 0, intent,
-            PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        
-        val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title ?: "FCM Notification")
-            .setContentText(messageBody)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-        
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        
-        // Desde Android Oreo, los canales de notificación son obligatorios
+
+        // 3) Mostrar la notificación
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Firebase Notifications",
-                NotificationManager.IMPORTANCE_DEFAULT
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Firebase Notifications",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                )
             )
-            notificationManager.createNotificationChannel(channel)
         }
-        
-        notificationManager.notify(0, notificationBuilder.build())
+
+        // Construimos el objeto Notification
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(t ?: "¡Nueva notificación!")
+            .setContentText(b ?: "")
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .build()
+
+        // Llamada explícita para evitar ambigüedad de overload
+        nm.notify(0, notification)
     }
 }
